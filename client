@@ -1,0 +1,102 @@
+cat << 'EOF' > client.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Full-Duplex Grayscale Face Snapshot Stream</title>
+    <style>
+        body {
+            background-color: #121212;
+            color: #ffffff;
+            font-family: Arial, sans-serif;
+            text-align: center;
+            margin-top: 30px;
+        }
+        .container {
+            display: flex;
+            justify-content: center;
+            align-items: flex-start;
+            gap: 40px;
+            margin-top: 20px;
+        }
+        .panel {
+            background-color: #1e1e1e;
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.5);
+        }
+        #streamView {
+            border: 3px solid #00ff00;
+            border-radius: 4px;
+            width: 640px;
+            height: 480px;
+            background-color: #000;
+        }
+        #faceView {
+            border: 3px solid #ff00ff;
+            border-radius: 4px;
+            width: 200px;
+            height: 200px;
+            background-color: #000;
+            object-fit: cover;
+        }
+        .status {
+            font-weight: bold;
+            color: #00ff00;
+            font-size: 1.2em;
+        }
+        h3 {
+            margin-top: 0;
+            color: #bbb;
+        }
+    </style>
+</head>
+<body>
+    <h2>Live Client Interface</h2>
+    <div class="status" id="connectionStatus">Connecting to Python Processing Server...</div>
+    
+    <div class="container">
+        <!-- Main Feed Panel -->
+        <div class="panel">
+            <h3>Live Grayscale Feed</h3>
+            <img id="streamView" src="" alt="Live Feed Container Stream">
+        </div>
+        
+        <!-- Isolated Face Snippet Panel -->
+        <div class="panel">
+            <h3>Detected Face Box</h3>
+            <img id="faceView" src="" alt="No Face Detected Yet">
+        </div>
+    </div>
+
+    <script>
+        const socket = new WebSocket('ws://localhost:8765');
+        const statusDiv = document.getElementById('connectionStatus');
+        const imgElement = document.getElementById('streamView');
+        const faceElement = document.getElementById('faceView');
+
+        socket.onopen = () => {
+            statusDiv.textContent = 'CONNECTED: Transmitting Live Tracking Subsystems';
+            statusDiv.style.color = '#00ff00';
+        };
+
+        socket.onmessage = (event) => {
+            const data = JSON.parse(event.data);
+            
+            // 1. Update the main camera feed frame
+            imgElement.src = 'data:image/jpeg;base64,' + data.image;
+            
+            // 2. Update the dedicated face snapshot box only if a face is actively found
+            if (data.face) {
+                faceElement.src = 'data:image/jpeg;base64,' + data.face;
+            }
+        };
+
+        socket.onclose = () => {
+            statusDiv.textContent = 'DISCONNECTED: Server offline.';
+            statusDiv.style.color = '#ff0000';
+        };
+    </script>
+</body>
+</html>
+EOF
