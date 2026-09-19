@@ -1,0 +1,87 @@
+cat << 'EOF' > server.py
+import cv2
+import asyncio
+import websockets
+import json
+import base64
+from ultralytics import YOLO
+
+# 1. Load models
+yolo_model = YOLO("yolov8n.pt")
+face_cascade = cv2.CascadeClassifier("haarcascade_frontalface_default.xml")
+
+# 2. Initialize camera
+cap = cv2.VideoCapture(0, cv2.CAP_V4L2)
+
+async def stream_handler(websocket):
+    print("Client application connected to full-duplex stream.")
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                await asyncio.sleep(0.01)
+                continue
+
+            # 3. Process frame to grayscale
+            gray_img = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+            yolo_input = cv2.cvtColor(gray_img, cv2.COLOR_GRAY2BGR)
+
+            # 4. Detect human bodies
+            yolo_results = yolo_model(yolo_input, classes=[0], conf=0.4, verbose=False)
+            
+            face_as_text = ""  # Default empty placeholder if no face found
+
+            for result in yolo_results:
+                boxes = result.boxes
+                for box in boxes:
+                    hx1, hy1, hx2, hy2 = map(int, box.xyxy[0])
+                    
+                    human_crop = gray_img[hy1:hy2, hx1:hx2]
+                    if human_crop.size == 0:
+                        continue
+                        
+                    # 5. Search for face signatures strictly within body frame
+                    faces = face_cascade.detectMultiScale(human_crop, scaleFactor=1.1, minNeighbors=4, minSize=(30, 30))
+                    
+                    for (fx, fy, fw, fh) in faces:
+                        face_x1 = hx1 + fx
+                        face_y1 = hy1 + fy
+                        face_x2 = face_x1 + fw
+                        face_y2 = face_y1 + fh
+                        
+                        # CROP THE FACE SIGNATURE (keep it color or grayscale as you prefer, let's keep it grayscale)
+                        face_snippet = yolo_input[face_y1:face_y2, face_x1:face_x2]
+                        if face_snippet.size > 0:
+                            _, face_buffer = cv2.imencode('.jpg', face_snippet)
+                            face_as_text = base64.b64encode(face_buffer).decode('utf-8')
+
+                        # Draw bounding boxes onto main grayscale layout
+                        cv2.rectangle(yolo_input, (face_x1, face_y1), (face_x2, face_y2), (0, 255, 0), 2)
+                        cv2.putText(yolo_input, "Human Face", (face_x1, face_y1 - 10), 
+                                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+            # 6. Encode the final full video frame
+            _, buffer = cv2.imencode('.jpg', yolo_input)
+            jpg_as_text = base64.b64encode(buffer).decode('utf-8')
+
+            # 7. Push both images directly down the full-duplex pipe
+            payload = {"image": jpg_as_text, "face": face_as_text}
+            await websocket.send(json.dumps(payload))
+            
+            await asyncio.sleep(0.03)
+
+    except websockets.exceptions.ConnectionClosed:
+        print("Client disconnected.")
+
+async def main():
+    print("Starting full-duplex processing server on ws://localhost:8765...")
+    async with websockets.serve(stream_handler, "localhost", 8765):
+        await asyncio.Future()  # Run forever
+
+if __name__ == "__main__":
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        cap.release()
+        print("\nServer gracefully shut down.")
+EOF
